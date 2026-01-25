@@ -1,0 +1,48 @@
+# WhatsApp Forensic Analyzer - spaCy/NER Service Dockerfile
+# Optimized for NER and PII detection
+# Security: Runs as non-root user 'spacy'
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Create non-root user for security
+RUN groupadd -r spacy && useradd -r -g spacy spacy
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements (spacy-specific subset)
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+    spacy \
+    presidio-analyzer \
+    presidio-anonymizer \
+    redis \
+    celery
+
+# Download spaCy model
+RUN python -m spacy download en_core_web_trf
+
+# Copy service code
+COPY backend/app/services/pii_service.py /app/services/
+
+# Set ownership for non-root user
+RUN chown -R spacy:spacy /app
+
+# Switch to non-root user
+USER spacy
+
+# Set environment variables
+ENV SPACY_MODEL=en_core_web_trf
+ENV PYTHONUNBUFFERED=1
+
+# Default command - run as Celery worker for NER/PII tasks
+CMD ["celery", "-A", "services.pii_service", "worker", "--loglevel=info", "-Q", "pii"]

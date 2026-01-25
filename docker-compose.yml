@@ -1,0 +1,256 @@
+version: '3.8'
+
+# WhatsApp Forensic Analyzer - Docker Compose Configuration
+# Version: 1.0.0
+# Standard Port: 8000
+# Standard Database: forensic_wa
+
+services:
+  # ============================================================================
+  # PostgreSQL Database
+  # ============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: forensic_postgres
+    environment:
+      POSTGRES_DB: forensic_wa
+      POSTGRES_USER: forensic_user
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-forensic_password_change_me}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=en_US.UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups/database:/backups
+    ports:
+      - "5432:5432"  # Remove in production
+    networks:
+      - forensic_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forensic_user -d forensic_wa"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================================================
+  # Redis Cache & Message Broker
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: forensic_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"  # Remove in production
+    networks:
+      - forensic_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================================================
+  # FastAPI Application
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: forensic_app
+    environment:
+      # Application
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+
+      # Database (Standard: forensic_wa)
+      DATABASE_URL: postgresql://forensic_user:${DATABASE_PASSWORD:-forensic_password_change_me}@postgres:5432/forensic_wa
+
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+      # API (Standard: 8000)
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+
+      # AI Configuration
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      USE_LOCAL_AI: ${USE_LOCAL_AI:-True}
+      USE_CLOUD_AI: ${USE_CLOUD_AI:-False}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # Admin User (First Run)
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe123!}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@forensics.local}
+
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    ports:
+      - "${EXTERNAL_PORT:-8000}:8000"  # Port 8000 internally, configurable externally
+    networks:
+      - forensic_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    command: >
+      sh -c "
+        # gemini-comment: In production, ensure '--reload' is removed from uvicorn command.
+        # Also, remove exposed ports for postgres and redis services for production deployments.
+        # And restrict CORS_ORIGINS to production frontends.
+        echo 'Waiting for database...' &&
+        sleep 5 &&
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting FastAPI application...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # ============================================================================
+  # Celery Worker (Async Tasks)
+  # ============================================================================
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: forensic_celery_worker
+    environment:
+      DATABASE_URL: postgresql://forensic_user:${DATABASE_PASSWORD:-forensic_password_change_me}@postgres:5432/forensic_wa
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - forensic_network
+    depends_on:
+      - redis
+      - postgres
+      - app
+    restart: unless-stopped
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
+
+  # ============================================================================
+  # Celery Beat (Scheduled Tasks)
+  # ============================================================================
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: forensic_celery_beat
+    environment:
+      DATABASE_URL: postgresql://forensic_user:${DATABASE_PASSWORD:-forensic_password_change_me}@postgres:5432/forensic_wa
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    volumes:
+      - ./backend:/app
+      - ./backups:/app/backups
+    networks:
+      - forensic_network
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+    command: celery -A app.celery_app beat --loglevel=info
+
+  # ============================================================================
+  # Whisper Audio Transcription (Optional GPU Support)
+  # ============================================================================
+  whisper:
+    build:
+      context: .
+      dockerfile: Dockerfile.whisper
+    container_name: forensic_whisper
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./uploads:/app/uploads
+      - ./backend/app/services:/app/services
+    networks:
+      - forensic_network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    # Uncomment for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           capabilities: [gpu]
+    #           count: 1
+
+  # ============================================================================
+  # spaCy NER/PII Detection
+  # ============================================================================
+  spacy:
+    build:
+      context: .
+      dockerfile: Dockerfile.spacy
+    container_name: forensic_spacy
+    environment:
+      SPACY_MODEL: ${SPACY_MODEL:-en_core_web_trf}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend/app/services:/app/services
+    networks:
+      - forensic_network
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  forensic_network:
+    driver: bridge
+    name: forensic_network
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  postgres_data:
+    name: forensic_postgres_data
+    driver: local
+  redis_data:
+    name: forensic_redis_data
+    driver: local
+
+# ============================================================================
+# Notes
+# ============================================================================
+# 1. Standard port is 8000 - do not change without updating documentation
+# 2. Standard database name is forensic_wa
+# 3. For production:
+#    - Remove port exposures for postgres and redis
+#    - Add nginx reverse proxy
+#    - Use Docker secrets instead of environment variables
+#    - Enable HTTPS/TLS
+# 4. GPU support:
+#    - Uncomment deploy section in whisper service
+#    - Install nvidia-docker2
+#    - Change WHISPER_DEVICE=cuda in .env
+# 5. Backup volumes regularly (see docs/BACKUP.md)

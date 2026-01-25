@@ -1,0 +1,48 @@
+# WhatsApp Forensic Analyzer - Whisper Service Dockerfile
+# Optimized for audio transcription with optional GPU support
+# Security: Runs as non-root user 'whisper'
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Create non-root user for security
+RUN groupadd -r whisper && useradd -r -g whisper whisper
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements (whisper-specific subset)
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+    openai-whisper \
+    torch \
+    torchaudio \
+    redis \
+    celery
+
+# Copy service code
+COPY backend/app/services/whisper_service.py /app/services/
+
+# Create upload directory
+RUN mkdir -p /app/uploads
+
+# Set ownership for non-root user
+RUN chown -R whisper:whisper /app
+
+# Switch to non-root user
+USER whisper
+
+# Set environment variables
+ENV WHISPER_MODEL=base
+ENV WHISPER_DEVICE=cpu
+ENV PYTHONUNBUFFERED=1
+
+# Default command - run as Celery worker for whisper tasks
+CMD ["celery", "-A", "services.whisper_service", "worker", "--loglevel=info", "-Q", "whisper"]
