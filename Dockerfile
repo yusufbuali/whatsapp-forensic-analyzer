@@ -49,6 +49,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY backend/ /app/
 
+# Copy alembic configuration (from repository root)
+COPY alembic.ini /app/alembic.ini
+
 # Create necessary directories
 RUN mkdir -p /app/uploads/evidence /app/uploads/working \
     /app/logs /app/backups \
