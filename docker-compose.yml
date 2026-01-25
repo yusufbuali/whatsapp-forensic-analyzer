@@ -173,52 +173,54 @@ services:
     command: celery -A app.celery_app beat --loglevel=info
 
   # ============================================================================
-  # Whisper Audio Transcription (Optional GPU Support)
+  # Whisper Audio Transcription (DISABLED for Phase 0 - saves disk space)
+  # Uncomment for Phase 2/3 or local deployment with more disk space
   # ============================================================================
-  whisper:
-    build:
-      context: .
-      dockerfile: Dockerfile.whisper
-    container_name: forensic_whisper
-    environment:
-      WHISPER_MODEL: ${WHISPER_MODEL:-base}
-      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
-      REDIS_URL: redis://redis:6379/0
-    volumes:
-      - ./uploads:/app/uploads
-      - ./backend/app/services:/app/services
-    networks:
-      - forensic_network
-    depends_on:
-      - redis
-    restart: unless-stopped
-    # Uncomment for GPU support:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           capabilities: [gpu]
-    #           count: 1
+  # whisper:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.whisper
+  #   container_name: forensic_whisper
+  #   environment:
+  #     WHISPER_MODEL: ${WHISPER_MODEL:-base}
+  #     WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+  #     REDIS_URL: redis://redis:6379/0
+  #   volumes:
+  #     - ./uploads:/app/uploads
+  #     - ./backend/app/services:/app/services
+  #   networks:
+  #     - forensic_network
+  #   depends_on:
+  #     - redis
+  #   restart: unless-stopped
+  #   # Uncomment for GPU support:
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           capabilities: [gpu]
+  #   #           count: 1
 
   # ============================================================================
-  # spaCy NER/PII Detection
+  # spaCy NER/PII Detection (DISABLED for Phase 0 - saves disk space)
+  # Uncomment for Phase 2/3 or local deployment with more disk space
   # ============================================================================
-  spacy:
-    build:
-      context: .
-      dockerfile: Dockerfile.spacy
-    container_name: forensic_spacy
-    environment:
-      SPACY_MODEL: ${SPACY_MODEL:-en_core_web_trf}
-      REDIS_URL: redis://redis:6379/0
-    volumes:
-      - ./backend/app/services:/app/services
-    networks:
-      - forensic_network
-    depends_on:
-      - redis
-    restart: unless-stopped
+  # spacy:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.spacy
+  #   container_name: forensic_spacy
+  #   environment:
+  #     SPACY_MODEL: ${SPACY_MODEL:-en_core_web_trf}
+  #     REDIS_URL: redis://redis:6379/0
+  #   volumes:
+  #     - ./backend/app/services:/app/services
+  #   networks:
+  #     - forensic_network
+  #   depends_on:
+  #     - redis
+  #   restart: unless-stopped
 
 # ============================================================================
 # Networks

@@ -42,8 +42,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Download spaCy model
-RUN python -m spacy download en_core_web_trf
+# Download spaCy model (DISABLED for Codespaces - saves disk space)
+# Uncomment for local deployment or Phase 2/3:
+# RUN python -m spacy download en_core_web_trf
 
 # Copy application code
 COPY backend/ /app/
